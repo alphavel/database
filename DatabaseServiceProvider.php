@@ -2,7 +2,7 @@
 
 namespace Alphavel\Database;
 
-use Alphavel\Core\ServiceProvider;
+use Alphavel\Framework\ServiceProvider;
 
 class DatabaseServiceProvider extends ServiceProvider
 {

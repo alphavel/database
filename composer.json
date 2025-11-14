@@ -13,7 +13,7 @@
     "require": {
         "php": "^8.1",
         "ext-pdo": "*",
-        "alphavel/alphavel": "^2.0"
+        "alphavel/alphavel": "dev-main"
     },
     "autoload": {
         "psr-4": {

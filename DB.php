@@ -20,266 +20,184 @@ use Swoole\Coroutine;
  */
 class DB
 {
-    /**
-     * Connections pool indexed by coroutine ID
-     * Each coroutine gets its own isolated PDO connection
-     */
+    private static ?ConnectionPool $pool = null;
     private static array $connections = [];
-
-    /**
-     * Prepared statements cache indexed by coroutine ID and SQL
-     * Statements are prepared once and reused within the same coroutine
-     */
-    private static array $statements = [];
-
-    /**
-     * Database configuration
-     */
     private static array $config = [];
 
     /**
-     * Set database configuration
-     * Usually called by DatabaseServiceProvider
+     * Configure the database subsystem
      */
-    public static function setConfig(array $config): void
+    public static function configure(array $config): void
     {
         self::$config = $config;
+        
+        // Initialize pool if in Swoole environment and pool size > 0
+        if (extension_loaded('swoole') && ($config['pool_size'] ?? 64) > 0) {
+            self::$pool = new ConnectionPool($config, (int)($config['pool_size'] ?? 64));
+        }
     }
 
     /**
-     * Get PDO connection for current coroutine
-     * Connections are isolated per coroutine (thread-safe)
-     * 
-     * @return PDO
+     * Initialize/Warmup the connection pool
+     * Should be called on WorkerStart
+     */
+    public static function initPool(): void
+    {
+        if (self::$pool) {
+            self::$pool->fill();
+        }
+    }
+
+    /**
+     * Get a connection for the current context
      */
     public static function connection(): PDO
     {
         $cid = self::getCoroutineId();
         
-        if (!isset(self::$connections[$cid])) {
-            self::$connections[$cid] = self::createConnection();
+        // Return existing connection for this coroutine
+        if (isset(self::$connections[$cid])) {
+            return self::$connections[$cid];
         }
         
+        // Try to get from pool
+        if (self::$pool) {
+            $connection = self::$pool->get();
+            self::$connections[$cid] = $connection;
+            return $connection;
+        }
+        
+        // Fallback: Create new connection
+        self::$connections[$cid] = self::createConnection();
         return self::$connections[$cid];
     }
 
     /**
-     * Get or create a cached prepared statement
-     * Statements are prepared once per coroutine and reused
-     * 
-     * Critical for performance: reduces overhead by ~100ns per execution
-     * 
-     * @param string $sql
-     * @return PDOStatement
+     * Release the connection back to the pool
+     * Should be called at the end of the request
      */
-    public static function prepare(string $sql): PDOStatement
+    public static function release(): void
     {
         $cid = self::getCoroutineId();
         
-        if (!isset(self::$statements[$cid][$sql])) {
-            self::$statements[$cid][$sql] = self::connection()->prepare($sql);
+        if (isset(self::$connections[$cid])) {
+            $connection = self::$connections[$cid];
+            unset(self::$connections[$cid]);
+            
+            if (self::$pool && $connection instanceof Connection) {
+                self::$pool->put($connection);
+            }
         }
-        
-        return self::$statements[$cid][$sql];
     }
 
-    /**
-     * Execute a raw query without parameters
-     * More efficient than prepare() for static queries
-     * 
-     * @param string $sql
-     * @return PDOStatement
-     */
-    public static function rawQuery(string $sql): PDOStatement
+    public static function prepare(string $sql): PDOStatement
     {
-        return self::connection()->query($sql);
+        return self::connection()->prepare($sql);
     }
 
-    /**
-     * Execute a query and return all results
-     * 
-     * @param string $sql
-     * @param array $params
-     * @return array
-     */
     public static function query(string $sql, array $params = []): array
     {
         $stmt = self::prepare($sql);
         $stmt->execute($params);
-        
         return $stmt->fetchAll();
     }
-
-    /**
-     * Execute a query and return first result
-     * 
-     * @param string $sql
-     * @param array $params
-     * @return array|null
-     */
+    
     public static function queryOne(string $sql, array $params = []): ?array
     {
         $stmt = self::prepare($sql);
         $stmt->execute($params);
-        
         $result = $stmt->fetch();
         return $result ?: null;
     }
 
-    /**
-     * Execute a statement (INSERT, UPDATE, DELETE)
-     * 
-     * @param string $sql
-     * @param array $params
-     * @return int Number of affected rows
-     */
     public static function execute(string $sql, array $params = []): int
     {
         $stmt = self::prepare($sql);
         $stmt->execute($params);
-        
         return $stmt->rowCount();
     }
 
-    /**
-     * Get the last inserted ID
-     * 
-     * @return string
-     */
     public static function lastInsertId(): string
     {
         return self::connection()->lastInsertId();
     }
 
-    /**
-     * Begin a transaction
-     * 
-     * @return void
-     */
     public static function beginTransaction(): void
     {
         self::connection()->beginTransaction();
     }
 
-    /**
-     * Commit the current transaction
-     * 
-     * @return void
-     */
     public static function commit(): void
     {
         self::connection()->commit();
     }
 
-    /**
-     * Rollback the current transaction
-     * 
-     * @return void
-     */
-    public static function rollback(): void
+    public static function rollBack(): void
     {
         self::connection()->rollBack();
     }
 
-    /**
-     * Check if currently in a transaction
-     * 
-     * @return bool
-     */
     public static function inTransaction(): bool
     {
         return self::connection()->inTransaction();
     }
 
-    /**
-     * Execute code within a transaction
-     * Automatically commits on success, rolls back on exception
-     * 
-     * @param callable $callback
-     * @return mixed
-     * @throws \Throwable
-     */
     public static function transaction(callable $callback): mixed
     {
         self::beginTransaction();
-        
         try {
             $result = $callback();
             self::commit();
-            
             return $result;
         } catch (\Throwable $e) {
             if (self::inTransaction()) {
-                self::rollback();
+                self::rollBack();
             }
             throw $e;
         }
     }
 
-    /**
-     * Create a new query builder for the given table
-     * 
-     * @param string $table
-     * @return QueryBuilder
-     */
     public static function table(string $table): QueryBuilder
     {
         return new QueryBuilder($table);
     }
 
-    /**
-     * Get current coroutine ID or 'default' for non-Swoole environments
-     * 
-     * @return string
-     */
     private static function getCoroutineId(): string
     {
-        // Fallback for development without Swoole
         if (!extension_loaded('swoole')) {
             return 'default';
         }
-        
         $cid = Coroutine::getCid();
         return $cid > 0 ? (string)$cid : 'default';
     }
 
-    /**
-     * Create a new PDO connection
-     * 
-     * @return PDO
-     * @throws DatabaseException
-     */
-    private static function createConnection(): PDO
+    private static function createConnection(): Connection
     {
-        try {
-            $dsn = sprintf(
-                '%s:host=%s;dbname=%s;charset=%s',
-                self::$config['driver'] ?? 'mysql',
-                self::$config['host'] ?? 'localhost',
-                self::$config['database'] ?? 'test',
-                self::$config['charset'] ?? 'utf8mb4'
-            );
-
-            $pdo = new PDO(
-                $dsn,
-                self::$config['username'] ?? 'root',
-                self::$config['password'] ?? '',
-                [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false,
-                ]
-            );
-
-            // Set port if specified
-            if (isset(self::$config['port'])) {
-                $dsn .= ';port=' . self::$config['port'];
-            }
-
-            return $pdo;
-        } catch (\PDOException $e) {
-            throw new DatabaseException('Connection failed: ' . $e->getMessage(), 0, $e);
+        $dsn = sprintf(
+            '%s:host=%s;dbname=%s;charset=%s',
+            self::$config['driver'] ?? 'mysql',
+            self::$config['host'] ?? 'localhost',
+            self::$config['database'] ?? 'test',
+            self::$config['charset'] ?? 'utf8mb4'
+        );
+        
+        if (isset(self::$config['port'])) {
+            $dsn .= ';port=' . self::$config['port'];
         }
+
+        $options = self::$config['options'] ?? [];
+        $options += [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ];
+
+        return new Connection(
+            $dsn,
+            self::$config['username'] ?? 'root',
+            self::$config['password'] ?? '',
+            $options
+        );
     }
 
     /**
@@ -290,8 +208,8 @@ class DB
      */
     public static function clearStatementCache(): void
     {
-        $cid = self::getCoroutineId();
-        unset(self::$statements[$cid]);
+        // No-op in new implementation as cache is bound to Connection object
+        // and recycled with the connection
     }
 
     /**
@@ -301,8 +219,6 @@ class DB
      */
     public static function disconnect(): void
     {
-        $cid = self::getCoroutineId();
-        unset(self::$connections[$cid]);
-        unset(self::$statements[$cid]);
+        self::release();
     }
 }

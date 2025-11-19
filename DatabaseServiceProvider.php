@@ -26,6 +26,7 @@ class DatabaseServiceProvider
         $username = getenv('DB_USERNAME') ?: 'root';
         $password = getenv('DB_PASSWORD') ?: '';
         $charset = getenv('DB_CHARSET') ?: 'utf8mb4';
+        $poolSize = getenv('DB_POOL_SIZE') ?: 64;
 
         if (empty($database)) {
             throw new DatabaseException('DB_DATABASE environment variable is required');
@@ -38,6 +39,7 @@ class DatabaseServiceProvider
             'username' => $username,
             'password' => $password,
             'charset' => $charset,
+            'pool_size' => (int) $poolSize,
             'options' => [
                 \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,

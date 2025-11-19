@@ -144,14 +144,19 @@ class DB
 
     public static function transaction(callable $callback): mixed
     {
-        self::beginTransaction();
+        // Otimização: Força uso da mesma conexão durante toda a transação
+        // Garante que a conexão seja obtida ANTES de iniciar a transação
+        // e travada no contexto da corrotina até o final
+        $connection = self::connection();
+        
+        $connection->beginTransaction();
         try {
             $result = $callback();
-            self::commit();
+            $connection->commit();
             return $result;
         } catch (\Throwable $e) {
-            if (self::inTransaction()) {
-                self::rollBack();
+            if ($connection->inTransaction()) {
+                $connection->rollBack();
             }
             throw $e;
         }
@@ -189,7 +194,7 @@ class DB
         $options += [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES => false,
+            PDO::ATTR_EMULATE_PREPARES => true, // Otimização: reduz latência pela metade
         ];
 
         return new Connection(

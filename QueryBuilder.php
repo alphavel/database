@@ -2,36 +2,36 @@
 
 namespace Alphavel\Database;
 
+/**
+ * Minimalist Query Builder for High Performance
+ * 
+ * Focused on:
+ * - Zero overhead: methods compile SQL directly
+ * - Reusable prepared statements via DB::prepare()
+ * - Simple array returns (no unnecessary hydration)
+ * - Fluent API for common queries
+ * 
+ * @package Alphavel\Database
+ * @version 2.0.0
+ */
 class QueryBuilder
 {
-    private Database $db;
-
     private string $table;
-
-    private array $selects = ['*'];
-
-    private array $wheres = [];
-
-    private array $joins = [];
-
-    private array $orderBy = [];
-
-    private array $groupBy = [];
-
+    private array $select = ['*'];
+    private array $where = [];
+    private array $bindings = [];
+    private ?string $orderBy = null;
     private ?int $limit = null;
-
     private ?int $offset = null;
 
-    public function __construct(Database $db, string $table)
+    public function __construct(string $table)
     {
-        $this->db = $db;
         $this->table = $table;
     }
 
     public function select(string ...$columns): self
     {
-        $this->selects = $columns;
-
+        $this->select = $columns;
         return $this;
     }
 
@@ -42,149 +42,43 @@ class QueryBuilder
             $operator = '=';
         }
 
-        $this->wheres[] = [
-            'type' => 'AND',
-            'column' => $column,
-            'operator' => $operator,
-            'value' => $value,
-        ];
-
-        return $this;
-    }
-
-    public function orWhere(string $column, mixed $operator, mixed $value = null): self
-    {
-        if ($value === null) {
-            $value = $operator;
-            $operator = '=';
-        }
-
-        $this->wheres[] = [
-            'type' => 'OR',
-            'column' => $column,
-            'operator' => $operator,
-            'value' => $value,
-        ];
+        $this->where[] = [$column, $operator, $value];
+        $this->bindings[] = $value;
 
         return $this;
     }
 
     public function whereIn(string $column, array $values): self
     {
-        $this->wheres[] = [
-            'type' => 'AND',
-            'column' => $column,
-            'operator' => 'IN',
-            'value' => $values,
-        ];
+        $placeholders = implode(',', array_fill(0, count($values), '?'));
+        $this->where[] = [$column, 'IN', "($placeholders)"];
+        $this->bindings = array_merge($this->bindings, $values);
 
         return $this;
-    }
-
-    public function whereNotIn(string $column, array $values): self
-    {
-        $this->wheres[] = [
-            'type' => 'AND',
-            'column' => $column,
-            'operator' => 'NOT IN',
-            'value' => $values,
-        ];
-
-        return $this;
-    }
-
-    public function whereNull(string $column): self
-    {
-        $this->wheres[] = [
-            'type' => 'AND',
-            'column' => $column,
-            'operator' => 'IS NULL',
-            'value' => null,
-        ];
-
-        return $this;
-    }
-
-    public function whereNotNull(string $column): self
-    {
-        $this->wheres[] = [
-            'type' => 'AND',
-            'column' => $column,
-            'operator' => 'IS NOT NULL',
-            'value' => null,
-        ];
-
-        return $this;
-    }
-
-    public function whereBetween(string $column, array $values): self
-    {
-        $this->wheres[] = [
-            'type' => 'AND',
-            'column' => $column,
-            'operator' => 'BETWEEN',
-            'value' => $values,
-        ];
-
-        return $this;
-    }
-
-    public function join(string $table, string $first, string $operator, string $second, string $type = 'INNER'): self
-    {
-        $this->joins[] = [
-            'type' => $type,
-            'table' => $table,
-            'first' => $first,
-            'operator' => $operator,
-            'second' => $second,
-        ];
-
-        return $this;
-    }
-
-    public function leftJoin(string $table, string $first, string $operator, string $second): self
-    {
-        return $this->join($table, $first, $operator, $second, 'LEFT');
-    }
-
-    public function rightJoin(string $table, string $first, string $operator, string $second): self
-    {
-        return $this->join($table, $first, $operator, $second, 'RIGHT');
     }
 
     public function orderBy(string $column, string $direction = 'ASC'): self
     {
-        $this->orderBy[] = [$column, strtoupper($direction)];
-
-        return $this;
-    }
-
-    public function groupBy(string ...$columns): self
-    {
-        $this->groupBy = array_merge($this->groupBy, $columns);
-
+        $this->orderBy = "$column " . strtoupper($direction);
         return $this;
     }
 
     public function limit(int $limit): self
     {
         $this->limit = $limit;
-
         return $this;
     }
 
     public function offset(int $offset): self
     {
         $this->offset = $offset;
-
         return $this;
     }
 
     public function get(): array
     {
-        [$sql, $bindings] = $this->compileSelect();
-
-        return $this->db->query($sql, $bindings);
+        $sql = $this->compileSelect();
+        return DB::query($sql, $this->bindings);
     }
 
     public function first(): ?array
@@ -195,35 +89,20 @@ class QueryBuilder
         return $results[0] ?? null;
     }
 
+    public function find(mixed $id, string $primaryKey = 'id'): ?array
+    {
+        return $this->where($primaryKey, $id)->first();
+    }
+
     public function count(): int
     {
-        $original = $this->selects;
-        $this->selects = ['COUNT(*) as count'];
+        $originalSelect = $this->select;
+        $this->select = ['COUNT(*) as count'];
 
         $result = $this->first();
-        $this->selects = $original;
+        $this->select = $originalSelect;
 
         return (int) ($result['count'] ?? 0);
-    }
-
-    public function sum(string $column): float
-    {
-        return $this->aggregate('SUM', $column);
-    }
-
-    public function avg(string $column): float
-    {
-        return $this->aggregate('AVG', $column);
-    }
-
-    public function max(string $column): mixed
-    {
-        return $this->aggregate('MAX', $column);
-    }
-
-    public function min(string $column): mixed
-    {
-        return $this->aggregate('MIN', $column);
     }
 
     public function exists(): bool
@@ -231,77 +110,92 @@ class QueryBuilder
         return $this->count() > 0;
     }
 
-    public function insert(array $data): int
+    public function insert(array $data): string
     {
-        [$sql, $bindings] = $this->compileInsert($data);
+        $columns = array_keys($data);
+        $values = array_values($data);
+        $placeholders = implode(',', array_fill(0, count($data), '?'));
 
-        return $this->db->execute($sql, $bindings);
+        $sql = "INSERT INTO {$this->table} (" . implode(',', $columns) . ") VALUES ($placeholders)";
+
+        $stmt = DB::prepare($sql);
+        $stmt->execute($values);
+
+        return DB::lastInsertId();
     }
 
     public function insertGetId(array $data): string
     {
-        $this->insert($data);
-
-        return $this->db->lastInsertId();
+        return $this->insert($data);
     }
 
     public function update(array $data): int
     {
-        [$sql, $bindings] = $this->compileUpdate($data);
+        $sets = [];
+        $bindings = [];
 
-        return $this->db->execute($sql, $bindings);
+        foreach ($data as $column => $value) {
+            $sets[] = "$column = ?";
+            $bindings[] = $value;
+        }
+
+        $sql = "UPDATE {$this->table} SET " . implode(', ', $sets);
+
+        if (!empty($this->where)) {
+            $conditions = [];
+            foreach ($this->where as [$column, $operator, $value]) {
+                if ($operator === 'IN') {
+                    $conditions[] = "$column $operator $value";
+                } else {
+                    $conditions[] = "$column $operator ?";
+                }
+            }
+            $sql .= ' WHERE ' . implode(' AND ', $conditions);
+            $bindings = array_merge($bindings, $this->bindings);
+        }
+
+        return DB::execute($sql, $bindings);
     }
 
     public function delete(): int
     {
-        [$sql, $bindings] = $this->compileDelete();
+        $sql = "DELETE FROM {$this->table}";
 
-        return $this->db->execute($sql, $bindings);
-    }
-
-    private function aggregate(string $function, string $column): float
-    {
-        $original = $this->selects;
-        $this->selects = ["{$function}({$column}) as aggregate"];
-
-        $result = $this->first();
-        $this->selects = $original;
-
-        return (float) ($result['aggregate'] ?? 0);
-    }
-
-    private function compileSelect(): array
-    {
-        $sql = 'SELECT ' . implode(', ', $this->selects) . ' FROM ' . $this->table;
-        $bindings = [];
-
-        // Joins
-        if (! empty($this->joins)) {
-            foreach ($this->joins as $join) {
-                $sql .= " {$join['type']} JOIN {$join['table']} ON {$join['first']}";
-                $sql .= " {$join['operator']} {$join['second']}";
+        if (!empty($this->where)) {
+            $conditions = [];
+            foreach ($this->where as [$column, $operator, $value]) {
+                if ($operator === 'IN') {
+                    $conditions[] = "$column $operator $value";
+                } else {
+                    $conditions[] = "$column $operator ?";
+                }
             }
+            $sql .= ' WHERE ' . implode(' AND ', $conditions);
         }
 
-        // Wheres
-        if (! empty($this->wheres)) {
-            [$whereSql, $whereBindings] = $this->compileWheres();
-            $sql .= $whereSql;
-            $bindings = array_merge($bindings, $whereBindings);
+        return DB::execute($sql, $this->bindings);
+    }
+
+    private function compileSelect(): string
+    {
+        $sql = 'SELECT ' . implode(', ', $this->select) . ' FROM ' . $this->table;
+
+        if (!empty($this->where)) {
+            $conditions = [];
+            foreach ($this->where as [$column, $operator, $value]) {
+                if ($operator === 'IN') {
+                    $conditions[] = "$column $operator $value";
+                } else {
+                    $conditions[] = "$column $operator ?";
+                }
+            }
+            $sql .= ' WHERE ' . implode(' AND ', $conditions);
         }
 
-        // Group By
-        if (! empty($this->groupBy)) {
-            $sql .= ' GROUP BY ' . implode(', ', $this->groupBy);
+        if ($this->orderBy) {
+            $sql .= ' ORDER BY ' . $this->orderBy;
         }
 
-        // Order By
-        if (! empty($this->orderBy)) {
-            $orders = array_map(fn ($order) => "{$order[0]} {$order[1]}", $this->orderBy);
-            $sql .= ' ORDER BY ' . implode(', ', $orders);
-        }
-
-        // Limit & Offset
         if ($this->limit !== null) {
             $sql .= ' LIMIT ' . $this->limit;
         }
@@ -310,90 +204,11 @@ class QueryBuilder
             $sql .= ' OFFSET ' . $this->offset;
         }
 
-        return [$sql, $bindings];
+        return $sql;
     }
 
-    private function compileInsert(array $data): array
+    public function getStatement(): \PDOStatement
     {
-        $columns = implode(', ', array_keys($data));
-        $placeholders = implode(', ', array_fill(0, count($data), '?'));
-
-        $sql = "INSERT INTO {$this->table} ({$columns}) VALUES ({$placeholders})";
-
-        return [$sql, array_values($data)];
-    }
-
-    private function compileUpdate(array $data): array
-    {
-        $sets = array_map(fn ($key) => "{$key} = ?", array_keys($data));
-        $sql = "UPDATE {$this->table} SET " . implode(', ', $sets);
-
-        $bindings = array_values($data);
-
-        if (! empty($this->wheres)) {
-            [$whereSql, $whereBindings] = $this->compileWheres();
-            $sql .= $whereSql;
-            $bindings = array_merge($bindings, $whereBindings);
-        }
-
-        return [$sql, $bindings];
-    }
-
-    private function compileDelete(): array
-    {
-        $sql = "DELETE FROM {$this->table}";
-        $bindings = [];
-
-        if (! empty($this->wheres)) {
-            [$whereSql, $whereBindings] = $this->compileWheres();
-            $sql .= $whereSql;
-            $bindings = $whereBindings;
-        }
-
-        return [$sql, $bindings];
-    }
-
-    private function compileWheres(): array
-    {
-        $sql = ' WHERE ';
-        $bindings = [];
-        $clauses = [];
-
-        foreach ($this->wheres as $i => $where) {
-            $clause = '';
-
-            if ($i > 0) {
-                $clause .= " {$where['type']} ";
-            }
-
-            switch ($where['operator']) {
-                case 'IN':
-                case 'NOT IN':
-                    $placeholders = implode(', ', array_fill(0, count($where['value']), '?'));
-                    $clause .= "{$where['column']} {$where['operator']} ({$placeholders})";
-                    $bindings = array_merge($bindings, $where['value']);
-                    break;
-
-                case 'BETWEEN':
-                    $clause .= "{$where['column']} BETWEEN ? AND ?";
-                    $bindings = array_merge($bindings, $where['value']);
-                    break;
-
-                case 'IS NULL':
-                case 'IS NOT NULL':
-                    $clause .= "{$where['column']} {$where['operator']}";
-                    break;
-
-                default:
-                    $clause .= "{$where['column']} {$where['operator']} ?";
-                    $bindings[] = $where['value'];
-            }
-
-            $clauses[] = $clause;
-        }
-
-        $sql .= implode('', $clauses);
-
-        return [$sql, $bindings];
+        return DB::prepare($this->compileSelect());
     }
 }

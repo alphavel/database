@@ -2,27 +2,56 @@
 
 namespace Alphavel\Database;
 
-use Alphavel\Framework\ServiceProvider;
-
-class DatabaseServiceProvider extends ServiceProvider
+/**
+ * Database Service Provider
+ * 
+ * Automatically configures DB facade from .env
+ * 
+ * Usage in bootstrap/app.php:
+ * DatabaseServiceProvider::boot();
+ * 
+ * @package Alphavel\Database
+ * @version 2.0.0
+ */
+class DatabaseServiceProvider
 {
-    public function register(): void
+    /**
+     * Bootstrap database connection from environment
+     */
+    public static function boot(): void
     {
-        $this->app->singleton('db', function () {
-            $config = $this->app->config('database', []);
+        $host = getenv('DB_HOST') ?: 'localhost';
+        $port = getenv('DB_PORT') ?: '3306';
+        $database = getenv('DB_DATABASE') ?: '';
+        $username = getenv('DB_USERNAME') ?: 'root';
+        $password = getenv('DB_PASSWORD') ?: '';
+        $charset = getenv('DB_CHARSET') ?: 'utf8mb4';
 
-            return new Database($config);
-        });
+        if (empty($database)) {
+            throw new DatabaseException('DB_DATABASE environment variable is required');
+        }
 
-        // Auto-register facade
-        $this->facades([
-            'DB' => 'db',
+        DB::configure([
+            'host' => $host,
+            'port' => (int) $port,
+            'database' => $database,
+            'username' => $username,
+            'password' => $password,
+            'charset' => $charset,
+            'options' => [
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                \PDO::ATTR_EMULATE_PREPARES => false,
+                \PDO::ATTR_STRINGIFY_FETCHES => false,
+            ],
         ]);
     }
 
-    public function boot(): void
+    /**
+     * Configure from custom config array
+     */
+    public static function configure(array $config): void
     {
-        $db = $this->app->make('db');
-        Model::setDatabase($db);
+        DB::configure($config);
     }
 }

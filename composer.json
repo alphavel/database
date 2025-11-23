@@ -1,8 +1,9 @@
 {
     "name": "alphavel/database",
     "description": "Database package for Alphavel Framework",
+    "version": "1.1.0",
     "type": "library",
-    "keywords": ["database", "pdo", "query-builder", "alphavel"],
+    "keywords": ["database", "pdo", "query-builder", "alphavel", "laravel-style", "performance"],
     "license": "MIT",
     "authors": [
         {

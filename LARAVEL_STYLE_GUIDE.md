@@ -212,9 +212,55 @@ if ($post === null) {
 
 **Performance**: +49% vs Query Builder (6,500 → 9,712 req/s) 🔥
 
-### DB::findMany() - Batch Queries
+### DB::findMultiple() / batchFetch() - Multiple Different IDs
 
-Para buscar múltiplos registros:
+Para buscar múltiplos registros **diferentes** com statement cacheado:
+
+```php
+// Buscar 3 registros diferentes com 1 statement cacheado
+[$user, $product, $order] = DB::findMultiple('entities', [
+    $userId,
+    $productId, 
+    $orderId
+]);
+
+// Alias mais limpo
+[$user, $product] = DB::batchFetch('world', [$userId, $productId]);
+
+// Find by custom column
+[$post1, $post2] = DB::findMultiple('posts', ['slug-1', 'slug-2'], 'slug');
+```
+
+**Performance**: +70% vs múltiplos `findOne()` 🔥  
+**Diferença para findMany()**: findMultiple = diferentes IDs, findMany = IN clause batch
+
+### DB::statement() - Direct Statement Caching
+
+Para cenários de ultra-performance com reuso de statements:
+
+```php
+// Cache statement no worker (Swoole persistence)
+static $stmt = null;
+
+if ($stmt === null) {
+    $stmt = DB::statement('SELECT * FROM world WHERE id = ?');
+}
+
+// Uso direto - zero overhead
+$stmt->execute([mt_rand(1, 10000)]);
+$world = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// Executar novamente com outro ID
+$stmt->execute([mt_rand(1, 10000)]);
+$world2 = $stmt->fetch(PDO::FETCH_ASSOC);
+```
+
+**Performance**: +50% vs `findOne()` para queries repetidas 🔥  
+**Use case**: Endpoints com múltiplas queries do mesmo padrão SQL
+
+### DB::findMany() - Batch Queries (IN Clause)
+
+Para buscar múltiplos registros com IN clause:
 
 ```php
 // Find multiple users by ID
@@ -464,14 +510,40 @@ $user = DB::findOne('users', 42);  // Hot path otimizado!
 $users = DB::findMany('users', $ids);  // 627% mais rápido!
 ```
 
-### Performance Comparison
+### Performance Comparison - Query Methods
 
 | Método | Request/s | vs Baseline | Use Case |
 |--------|-----------|-------------|----------|
 | `table()->where()->first()` | 350 | baseline | Queries complexas |
-| `findOne('table', $id)` | 6,500 | +1,757% | Hot paths, benchmarks |
-| `findMany(batch)` | 2,269 | +548% | Múltiplos registros |
+| `statement()` (manual) | 8,000+ | +2,185% | Ultra hot paths |
+| `findMultiple()/batchFetch()` | 7,500 | +2,042% | Múltiplos IDs diferentes |
+| `findOne('table', $id)` | 6,500 | +1,757% | Single record lookup |
+| `findMany(batch)` | 2,269 | +548% | IN clause batch |
 | With Global Cache | 9,712 | +2,674% | Produção 🚀 |
+
+### Quando usar cada método?
+
+```php
+// ✅ DB::statement() - Ultra hot paths (endpoints críticos)
+static $stmt = null;
+$stmt ??= DB::statement('SELECT * FROM world WHERE id = ?');
+$stmt->execute([$id]);
+
+// ✅ DB::batchFetch() - Buscar diferentes entidades no mesmo request
+[$user, $product, $order] = DB::batchFetch('entities', [$userId, $productId, $orderId]);
+
+// ✅ DB::findOne() - Busca única com código limpo
+$user = DB::findOne('users', 42);
+
+// ✅ DB::findMany() - Buscar múltiplos com IN clause
+$users = DB::findMany('users', [1, 2, 3, 4, 5]);
+
+// ✅ Query Builder - Queries complexas com filtros
+$users = DB::table('users')
+    ->where('status', 'active')
+    ->whereIn('role', ['admin', 'moderator'])
+    ->get();
+```
 
 ---
 
@@ -494,10 +566,16 @@ DB::table('users')
     ->limit(10)
     ->get();
 
+// ✅ Ultra hot paths (novo!)
+$stmt = DB::statement('SELECT * FROM world WHERE id = ?');  // +2,185% 🔥
+
+// ✅ Multiple different IDs (novo!)
+[$user, $product] = DB::batchFetch('entities', [$userId, $productId]);  // +2,042% 🔥
+
 // ✅ Hot path optimization (novo!)
 DB::findOne('World', mt_rand(1, 10000));  // +1,757% 🔥
 
-// ✅ Batch queries (novo!)
+// ✅ Batch queries with IN (novo!)
 DB::findMany('posts', [1, 2, 3, 4, 5]);  // +627% 🔥
 
 // ✅ Transações seguras

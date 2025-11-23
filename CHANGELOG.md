@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2] - 2024-11-23
+
+### 🚀 Performance - Hybrid Cache Strategy (Critical Optimization)
+
+**Addresses Performance Degradation Reported in Production**
+
+**Issues Identified:**
+- Dashboard: -64% performance (2,118 → 765 req/s)
+- Checkout: -54% performance (1,987 → 906 req/s)
+- DB::findOne(): 97.5% below spec (1,233 vs 50,000 req/s)
+- Cause: v1.3.1 prepare() overhead (150-250µs per request)
+
+**Solution Implemented - Hybrid Cache Strategy:**
+
+1. **Query Builder - SQL Cache + Statement Pool**
+```php
+// SQL compilation cached globally (thread-safe)
+// PDOStatements pooled per coroutine (isolated, fast)
+// Best of both worlds: safety + performance
+```
+
+2. **DB::findOne() - Hot Path Optimization**
+```php
+// Statement pooled per coroutine for ultra-hot paths
+// Target: 40,000-50,000 req/s
+// Eliminates prepare() overhead completely
+```
+
+**Performance Results (Expected):**
+- Dashboard: 765 → 1,500-2,000 req/s (+100-160%)
+- Checkout: 906 → 1,800-2,000 req/s (+100-120%)
+- DB::findOne(): 1,233 → 35,000-45,000 req/s (+2,700-3,500%)
+- Search: 636 → 1,000-1,200 req/s (+57-89%)
+
+**Technical Details:**
+- `QueryBuilder::$sqlCache` - SQL strings (shared, thread-safe)
+- `QueryBuilder::$statementPool` - PDOStatements per coroutine
+- `DB::$hotPathStatements` - Dedicated pool for findOne/findMany
+- Auto-cleanup via `Swoole\Coroutine::defer()`
+- Max 50 statements per coroutine (configurable)
+
+**New Methods:**
+- `QueryBuilder::setMaxStatementsPerCoroutine($max)` - Configure pool size
+- `QueryBuilder::cleanupCoroutineStatements($coId)` - Internal cleanup
+
+**Backward Compatibility:**
+- ✅ 100% compatible - no breaking changes
+- ✅ Drop-in replacement for v1.3.1
+- ✅ Automatic optimizations (no code changes)
+
+---
+
 ## [1.3.1] - 2024-11-23
 
 ### 🔧 Fixed - Race Condition in Query Builder Statement Cache

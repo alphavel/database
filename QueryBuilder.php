@@ -19,27 +19,36 @@ class QueryBuilder
 {
     /**
      * Static SQL cache (persists across requests in Swoole worker)
-     * 
-     * Key format: md5(query_structure)
-     * Caches compiled SQL strings (not PDOStatements for thread-safety)
-     * 
-     * Performance: 5-8x faster than recompiling SQL every time
-     * Example: 274 → 1,500-2,000 req/s on TechEmpower Search
-     * 
-     * Note: We cache SQL strings, not PDOStatements, to avoid race conditions
-     * in Swoole coroutines. PDO prepare() is fast; SQL compilation is slow.
+     * Shared across all coroutines - thread-safe for immutable SQL strings
      * 
      * @var array<string, string>
      */
-    private static array $statementCache = [];
+    private static array $sqlCache = [];
     
     /**
-     * Maximum number of cached statements
-     * Prevents memory bloat on workers with many query patterns
+     * Statement pool per coroutine (isolated, no race conditions)
      * 
+     * Key format: "{coroutineId}:{cacheKey}"
+     * Each coroutine has its own PDOStatement instances
+     * 
+     * Performance: Eliminates prepare() overhead (100-200µs per request)
+     * Thread-safety: Statements never shared between coroutines
+     * 
+     * @var array<string, \PDOStatement>
+     */
+    private static array $statementPool = [];
+    
+    /**
+     * Maximum number of cached SQL strings (shared)
      * @var int
      */
-    private static int $maxCachedStatements = 500;
+    private static int $maxCachedSql = 500;
+    
+    /**
+     * Maximum number of statements per coroutine
+     * @var int
+     */
+    private static int $maxStatementsPerCoroutine = 50;
     
     private string $table;
     private array $select = ['*'];
@@ -102,30 +111,77 @@ class QueryBuilder
 
     public function get(): array
     {
-        // Use statement cache for maximum performance
+        // Hybrid cache strategy (v1.3.2):
+        // 1. SQL compilation cached globally (expensive, shared-safe)
+        // 2. PDOStatement pooled per coroutine (fast, isolated)
+        
         $cacheKey = $this->getStatementCacheKey();
         
-        // In Swoole environment, cache SQL string and prepare per-coroutine
-        // to avoid race conditions with shared PDOStatement
-        if (!isset(self::$statementCache[$cacheKey])) {
-            // Check cache size limit
-            if (count(self::$statementCache) >= self::$maxCachedStatements) {
+        // STEP 1: Cache SQL string (shared, thread-safe)
+        if (!isset(self::$sqlCache[$cacheKey])) {
+            // Check SQL cache size limit
+            if (count(self::$sqlCache) >= self::$maxCachedSql) {
                 // Remove oldest entries (simple FIFO)
-                self::$statementCache = array_slice(self::$statementCache, 100, null, true);
+                self::$sqlCache = array_slice(self::$sqlCache, 100, null, true);
             }
             
             $sql = $this->compileSelect();
-            // Cache the SQL string, not the PDOStatement
-            self::$statementCache[$cacheKey] = $sql;
+            self::$sqlCache[$cacheKey] = $sql;
         }
         
-        // Get cached SQL and prepare fresh statement for this execution
-        // This is still fast: we save SQL compilation, PDO just prepares
-        $sql = self::$statementCache[$cacheKey];
-        $stmt = DB::connection()->prepare($sql);
+        // STEP 2: Pool PDOStatement per coroutine (isolated, no race)
+        $coId = \Swoole\Coroutine::getCid();
+        $poolKey = "{$coId}:{$cacheKey}";
+        
+        if (!isset(self::$statementPool[$poolKey])) {
+            // Initialize coroutine cleanup if first statement in this coroutine
+            if (!isset(self::$statementPool[$coId . ':init'])) {
+                self::$statementPool[$coId . ':init'] = true;
+                
+                // Auto-cleanup statements when coroutine ends
+                \Swoole\Coroutine::defer(function() use ($coId) {
+                    self::cleanupCoroutineStatements($coId);
+                });
+            }
+            
+            // Check per-coroutine limit
+            $coStatements = array_filter(
+                array_keys(self::$statementPool),
+                fn($k) => str_starts_with($k, "{$coId}:")
+            );
+            
+            if (count($coStatements) >= self::$maxStatementsPerCoroutine) {
+                // Remove oldest statement from this coroutine
+                $oldest = reset($coStatements);
+                unset(self::$statementPool[$oldest]);
+            }
+            
+            // Prepare statement for this coroutine
+            $sql = self::$sqlCache[$cacheKey];
+            self::$statementPool[$poolKey] = DB::connection()->prepare($sql);
+        }
+        
+        // Execute with current bindings
+        $stmt = self::$statementPool[$poolKey];
         $stmt->execute($this->bindings);
         
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+    
+    /**
+     * Cleanup statements for a finished coroutine
+     * Called automatically via Swoole\Coroutine::defer()
+     */
+    private static function cleanupCoroutineStatements(int $coId): void
+    {
+        $prefix = "{$coId}:";
+        $prefixLen = strlen($prefix);
+        
+        foreach (array_keys(self::$statementPool) as $key) {
+            if (substr($key, 0, $prefixLen) === $prefix) {
+                unset(self::$statementPool[$key]);
+            }
+        }
     }
 
     public function first(): ?array
@@ -290,37 +346,52 @@ class QueryBuilder
     }
     
     /**
-     * Clear statement cache (useful for testing or memory management)
+     * Clear all caches (SQL and statement pool)
+     * Useful for testing or memory management
      * 
      * @return void
      */
     public static function clearStatementCache(): void
     {
-        self::$statementCache = [];
+        self::$sqlCache = [];
+        self::$statementPool = [];
     }
     
     /**
-     * Get statement cache statistics
+     * Get cache statistics
      * 
-     * @return array{count: int, max: int, memory: int}
+     * @return array{sql_count: int, statements_count: int, sql_max: int, stmt_max_per_co: int, memory: int}
      */
     public static function getStatementCacheStats(): array
     {
         return [
-            'count' => count(self::$statementCache),
-            'max' => self::$maxCachedStatements,
+            'sql_count' => count(self::$sqlCache),
+            'statements_count' => count(self::$statementPool),
+            'sql_max' => self::$maxCachedSql,
+            'stmt_max_per_co' => self::$maxStatementsPerCoroutine,
             'memory' => memory_get_usage(true),
         ];
     }
     
     /**
-     * Set maximum number of cached statements
+     * Set maximum number of cached SQL strings (shared)
      * 
-     * @param int $max Maximum statements to cache
+     * @param int $max Maximum SQL strings to cache
      * @return void
      */
     public static function setMaxCachedStatements(int $max): void
     {
-        self::$maxCachedStatements = $max;
+        self::$maxCachedSql = $max;
+    }
+    
+    /**
+     * Set maximum number of statements per coroutine
+     * 
+     * @param int $max Maximum statements per coroutine
+     * @return void
+     */
+    public static function setMaxStatementsPerCoroutine(int $max): void
+    {
+        self::$maxStatementsPerCoroutine = $max;
     }
 }

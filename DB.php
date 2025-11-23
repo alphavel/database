@@ -23,6 +23,19 @@ class DB
     private static ?ConnectionPool $pool = null;
     private static array $connections = [];
     private static array $config = [];
+    
+    /**
+     * Hot path statement cache per coroutine
+     * 
+     * For ultra-high-frequency methods like findOne(), findMany()
+     * Key format: "{coroutineId}:{method}:{table}:{column}"
+     * 
+     * Performance: Eliminates prepare() overhead on critical paths
+     * Target: 40,000-50,000 req/s for findOne()
+     * 
+     * @var array<string, \PDOStatement>
+     */
+    private static array $hotPathStatements = [];
 
     /**
      * Configure the database subsystem
@@ -245,10 +258,47 @@ class DB
      */
     public static function findOne(string $table, int|string $id, string $column = 'id'): ?array
     {
-        // Generate consistent SQL for maximum cache hit rate
-        $sql = "SELECT * FROM {$table} WHERE {$column} = ?";
+        // Hot path optimization (v1.3.2): Statement pool per coroutine
+        // Target: 40,000-50,000 req/s (eliminates prepare() overhead)
         
-        return self::queryOne($sql, [$id]);
+        $cid = self::getCoroutineId();
+        $cacheKey = "{$cid}:findOne:{$table}:{$column}";
+        
+        // Pool statement for this coroutine
+        if (!isset(self::$hotPathStatements[$cacheKey])) {
+            // Setup coroutine cleanup on first access
+            if (!isset(self::$hotPathStatements["{$cid}:init"])) {
+                self::$hotPathStatements["{$cid}:init"] = true;
+                
+                \Swoole\Coroutine::defer(function() use ($cid) {
+                    self::cleanupHotPathStatements($cid);
+                });
+            }
+            
+            $sql = "SELECT * FROM {$table} WHERE {$column} = ?";
+            self::$hotPathStatements[$cacheKey] = self::connection()->prepare($sql);
+        }
+        
+        $stmt = self::$hotPathStatements[$cacheKey];
+        $stmt->execute([$id]);
+        $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+        
+        return $result ?: null;
+    }
+    
+    /**
+     * Cleanup hot path statements for finished coroutine
+     */
+    private static function cleanupHotPathStatements(int $cid): void
+    {
+        $prefix = "{$cid}:";
+        $prefixLen = strlen($prefix);
+        
+        foreach (array_keys(self::$hotPathStatements) as $key) {
+            if (substr($key, 0, $prefixLen) === $prefix) {
+                unset(self::$hotPathStatements[$key]);
+            }
+        }
     }
 
     /**

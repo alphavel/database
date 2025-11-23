@@ -168,18 +168,31 @@ class DB
     }
 
     /**
-     * Batch query optimization: Find multiple records by IDs in a single query
+     * Find multiple records by IDs in a single optimized query.
+     * 
+     * This method uses a WHERE IN clause to fetch multiple records efficiently,
+     * reducing N queries to just 1. Laravel-style API for batch operations.
      * 
      * Performance: +627% vs sequential queries (312 → 2,269 req/s)
      * 
-     * Example:
-     *   DB::findMany('World', [1, 2, 3, 4, 5]) 
-     *   // SELECT * FROM World WHERE id IN (1,2,3,4,5)
+     * @param string $table The table name
+     * @param array $ids Array of IDs to find
+     * @param string $column The column to match against (default: 'id')
+     * @return array Array of matching records
      * 
-     * @param string $table Table name
-     * @param array $ids Array of IDs
-     * @param string $column Column name (default: 'id')
-     * @return array Array of records
+     * @example
+     * // Find multiple users by ID (Laravel-style)
+     * $users = DB::findMany('users', [1, 2, 3, 4, 5]);
+     * // SELECT * FROM users WHERE id IN (1,2,3,4,5)
+     * 
+     * @example
+     * // Find by custom column
+     * $posts = DB::findMany('posts', ['published', 'draft'], 'status');
+     * // SELECT * FROM posts WHERE status IN ('published','draft')
+     * 
+     * @example
+     * // Empty array returns empty result (no query executed)
+     * $empty = DB::findMany('users', []);  // []
      */
     public static function findMany(string $table, array $ids, string $column = 'id'): array
     {
@@ -191,14 +204,39 @@ class DB
     }
 
     /**
-     * Batch query helper: Execute query with IN clause
+     * Execute a raw SQL query with IN clause optimization.
      * 
-     * Example:
-     *   DB::queryIn('SELECT * FROM World WHERE id IN (?)', [1, 2, 3, 4, 5])
+     * This method automatically expands a single placeholder (?) into multiple
+     * placeholders based on the values array. Similar to Laravel's whereIn but
+     * for raw SQL queries.
      * 
-     * @param string $sql SQL with single placeholder (?)
-     * @param array $values Values for IN clause
-     * @return array Results
+     * @param string $sql SQL query with single placeholder (?)
+     * @param array $values Array of values for the IN clause
+     * @return array Query results
+     * 
+     * @example
+     * // Simple IN query
+     * $worlds = DB::queryIn(
+     *     'SELECT * FROM World WHERE id IN (?)',
+     *     [1, 2, 3, 4, 5]
+     * );
+     * 
+     * @example
+     * // Complex query with JOIN
+     * $results = DB::queryIn(
+     *     'SELECT u.*, p.title 
+     *      FROM users u 
+     *      JOIN posts p ON u.id = p.user_id 
+     *      WHERE u.id IN (?)',
+     *     [10, 20, 30]
+     * );
+     * 
+     * @example
+     * // With additional conditions
+     * $active = DB::query(
+     *     'SELECT * FROM users WHERE id IN (?) AND status = ?',
+     *     array_merge($ids, ['active'])
+     * );
      */
     public static function queryIn(string $sql, array $values): array
     {

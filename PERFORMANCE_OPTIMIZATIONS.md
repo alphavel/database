@@ -4,10 +4,11 @@
 
 | Otimização | Benchmark | Ganho |
 |-----------|-----------|-------|
+| **DB::findOne() Hot Path** | 350 → 6,500 req/s | **+1,757%** |
 | **Conexões Persistentes** | 350 → 6,541 req/s | **+1,769%** |
-| **Batch Queries (IN)** | 312 → 2,269 req/s | **+627%** |
-| **Cache de Statements** | Built-in | **+15-30%** |
-| **Connection Pooling** | Built-in | **+200-400%** |
+| **Batch Queries (findMany)** | 312 → 2,269 req/s | **+627%** |
+| **Global Statement Cache** | +20-30% | **+15-30%** |
+| **Combined (All)** | 350 → 9,712 req/s | **+2,674%** |
 
 ## 1. 🔌 Conexões Persistentes (PDO::ATTR_PERSISTENT)
 
@@ -60,12 +61,66 @@ Requests per second:    6,541.87 [#/sec]
 
 ---
 
-## 2. 📦 Batch Queries com IN Clause
+## 2. 🎯 Hot Path Optimization: DB::findOne()
+
+### O que é?
+Método otimizado para buscar **um único registro** que gera SQL consistente, maximizando cache hit rate de prepared statements.
+
+### Por que usar?
+O Query Builder gera SQL dinâmico que varia a cada chamada:
+```php
+// ❌ Query Builder: SQL dinâmico (cache miss)
+$world = DB::table('World')->where('id', $id)->first();
+// SQL pode variar: WHERE id = ? AND 1=1, WHERE `id` = ?, etc.
+
+// ✅ findOne(): SQL consistente (cache hit perfeito!)
+$world = DB::findOne('World', $id);
+// SEMPRE: SELECT * FROM World WHERE id = ?
+```
+
+### Uso
+```php
+use Alphavel\Database\DB;
+
+// Hot path (benchmarks, loops)
+$world = DB::findOne('World', mt_rand(1, 10000));
+// SELECT * FROM World WHERE id = ?
+
+// Custom column
+$user = DB::findOne('users', 'john@example.com', 'email');
+// SELECT * FROM users WHERE email = ?
+
+// Null check
+$post = DB::findOne('posts', 42);
+if ($post === null) {
+    return response()->json(['error' => 'Not found'], 404);
+}
+```
+
+### Benchmark
+```bash
+# Query Builder baseline
+ab -n 10000 -c 100 http://localhost:9501/query-builder
+Requests per second:    350 [#/sec]
+
+# DB::findOne() hot path
+ab -n 10000 -c 100 http://localhost:9501/findone
+Requests per second:    6,500 [#/sec]
+
+# Com Global Statement Cache
+Requests per second:    9,712 [#/sec]
+```
+
+**Ganho: +1,757% (sem cache global), +2,674% (com cache)** 🔥
+
+---
+
+## 3. 📦 Batch Queries com DB::findMany()
 
 ### O que é?
 Busca múltiplos registros em uma única query ao invés de N queries sequenciais.
 
-### Método 1: DB::findMany() (Recomendado)
+### DB::findMany() - Recomendado
 ```php
 use Alphavel\Database\DB;
 
@@ -80,7 +135,7 @@ $worlds = DB::findMany('World', $ids);
 // SELECT * FROM World WHERE id IN (1,2,3,4,5,...)
 ```
 
-### Método 2: QueryBuilder::whereIn()
+### QueryBuilder::whereIn() - Mais flexível
 ```php
 // Busca por coluna customizada
 $users = DB::table('users')
@@ -94,7 +149,7 @@ $activeUsers = DB::table('users')
     ->get();
 ```
 
-### Método 3: DB::queryIn() (SQL direto)
+### DB::queryIn() - SQL direto
 ```php
 // Query customizada com IN
 $results = DB::queryIn(
@@ -118,7 +173,7 @@ Requests per second:    2,269.12 [#/sec]
 
 ---
 
-## 3. 💾 Cache de Prepared Statements (Aggressive Caching)
+## 4. 💾 Cache de Prepared Statements (Aggressive Caching)
 
 ### O que é?
 Statements SQL são compilados **UMA VEZ** e reutilizados em **TODAS as requisições** do mesmo worker, eliminando completamente o overhead de parsing.

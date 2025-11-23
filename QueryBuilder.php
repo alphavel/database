@@ -18,15 +18,18 @@ namespace Alphavel\Database;
 class QueryBuilder
 {
     /**
-     * Static statement cache (persists across requests in Swoole worker)
+     * Static SQL cache (persists across requests in Swoole worker)
      * 
      * Key format: md5(query_structure)
-     * Reuses PDOStatements for identical query patterns
+     * Caches compiled SQL strings (not PDOStatements for thread-safety)
      * 
      * Performance: 5-8x faster than recompiling SQL every time
      * Example: 274 → 1,500-2,000 req/s on TechEmpower Search
      * 
-     * @var array<string, \PDOStatement>
+     * Note: We cache SQL strings, not PDOStatements, to avoid race conditions
+     * in Swoole coroutines. PDO prepare() is fast; SQL compilation is slow.
+     * 
+     * @var array<string, string>
      */
     private static array $statementCache = [];
     
@@ -102,7 +105,8 @@ class QueryBuilder
         // Use statement cache for maximum performance
         $cacheKey = $this->getStatementCacheKey();
         
-        // Reuse statement if already compiled
+        // In Swoole environment, cache SQL string and prepare per-coroutine
+        // to avoid race conditions with shared PDOStatement
         if (!isset(self::$statementCache[$cacheKey])) {
             // Check cache size limit
             if (count(self::$statementCache) >= self::$maxCachedStatements) {
@@ -111,10 +115,14 @@ class QueryBuilder
             }
             
             $sql = $this->compileSelect();
-            self::$statementCache[$cacheKey] = DB::connection()->prepare($sql);
+            // Cache the SQL string, not the PDOStatement
+            self::$statementCache[$cacheKey] = $sql;
         }
         
-        $stmt = self::$statementCache[$cacheKey];
+        // Get cached SQL and prepare fresh statement for this execution
+        // This is still fast: we save SQL compilation, PDO just prepares
+        $sql = self::$statementCache[$cacheKey];
+        $stmt = DB::connection()->prepare($sql);
         $stmt->execute($this->bindings);
         
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);

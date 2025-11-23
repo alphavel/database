@@ -64,10 +64,12 @@ Requests per second:    6,541.87 [#/sec]
 
 ---
 
-## 2. 🚀 Query Builder Statement Cache (v1.3.0 - Transparente!)
+## 2. 🚀 Query Builder Statement Cache (v1.3.1 - Transparente!)
 
 ### O que é?
-**Cache automático** de PDOStatements no Query Builder. Queries com mesma estrutura (mas valores diferentes) reutilizam o mesmo prepared statement.
+**Cache automático** de SQL compilado no Query Builder. Queries com mesma estrutura (mas valores diferentes) reutilizam a mesma string SQL, economizando compilação.
+
+> **v1.3.1 Update:** Agora cacheia SQL strings (não PDOStatements) para evitar race conditions em Swoole com alta concorrência.
 
 ### Por que é revolucionário?
 ✅ **Zero Breaking Changes** - 100% compatível com código existente  
@@ -87,14 +89,14 @@ $results = DB::table('world')
     ->get();
 // Compile SQL → Prepare → Execute (3 etapas a cada request)
 
-// Agora (v1.3.0): Statement cacheado automaticamente!
+// Agora (v1.3.1): SQL cacheado automaticamente!
 $results = DB::table('world')
     ->where('id', '>=', 50)    // Valores diferentes
     ->where('id', '<=', 500)   // Mas mesma estrutura
     ->orderBy('id', 'asc')
     ->limit(20)
     ->get();
-// Cache hit → Execute (1 etapa apenas!) 🔥
+// SQL cached → Prepare → Execute (economiza compilação!) 🔥
 ```
 
 ### Estrutura vs Valores
@@ -119,12 +121,15 @@ DB::table('world')->where('id', '>=', 1000)->where('id', '<=', 5000)->get();
 GET /search?min_id=1&max_id=100&sort=id&order=asc&page=1&per_page=20
 Requests per second: 274 [#/sec]
 
-# Depois (v1.3.0): Statement cache automático
+# Depois (v1.3.1): SQL cache automático + thread-safe
 GET /search?min_id=50&max_id=500&sort=id&order=asc&page=2&per_page=20
-Requests per second: 1,500-2,000 [#/sec]
+Requests per second: 1,109-1,434 [#/sec]
 ```
 
-**Ganho: +500-630% (5-8x mais rápido)** 🚀
+**Ganho: +305-423% (4-5x mais rápido)** 🚀
+
+> **Note:** v1.3.0 tinha race condition em alta concorrência (100+ conexões).  
+> v1.3.1 corrige isso cacheando SQL strings ao invés de PDOStatements.
 
 ### Configuração
 

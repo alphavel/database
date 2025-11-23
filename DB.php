@@ -469,6 +469,52 @@ class DB
     {
         Connection::setMaxCachedStatements($max);
     }
+    
+    /**
+     * Get Query Builder statement cache statistics
+     * 
+     * Shows how many query patterns are cached in the Query Builder.
+     * This cache is separate from Connection's prepared statement cache.
+     * 
+     * @return array{count: int, max: int, memory: int}
+     * 
+     * @example
+     * $stats = DB::getQueryBuilderCacheStats();
+     * // ['count' => 42, 'max' => 500, 'memory' => 12582912]
+     */
+    public static function getQueryBuilderCacheStats(): array
+    {
+        return QueryBuilder::getStatementCacheStats();
+    }
+    
+    /**
+     * Clear Query Builder statement cache
+     * 
+     * @return void
+     * 
+     * @example
+     * // Clear cache after deploying schema changes
+     * DB::clearQueryBuilderCache();
+     */
+    public static function clearQueryBuilderCache(): void
+    {
+        QueryBuilder::clearStatementCache();
+    }
+    
+    /**
+     * Set maximum Query Builder cached statements
+     * 
+     * @param int $max Maximum statements to cache
+     * @return void
+     * 
+     * @example
+     * // Increase for complex applications with many query patterns
+     * DB::setMaxQueryBuilderStatements(1000);
+     */
+    public static function setMaxQueryBuilderStatements(int $max): void
+    {
+        QueryBuilder::setMaxCachedStatements($max);
+    }
 
     private static function getCoroutineId(): string
     {

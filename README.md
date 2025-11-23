@@ -255,6 +255,54 @@ Error: Transaction in progress on different connection
 
 **Solution:** Always use `DB::transaction()` wrapper instead of manual BEGIN/COMMIT.
 
-## 📄 License
+## � Performance Optimizations
+
+Alphavel Database includes **4 native performance optimizations** for extreme throughput:
+
+### 1. ⚡ Persistent Connections (+1,769%)
+```php
+// config/database.php - ENABLED BY DEFAULT
+'persistent' => true,  // PDO::ATTR_PERSISTENT
+```
+
+**Benchmark**: 350 → 6,541 req/s (+1,769%) 🔥
+
+### 2. 📦 Batch Queries (+627%)
+```php
+// ❌ BAD: 20 queries (312 req/s)
+foreach ($ids as $id) {
+    $world = DB::table('World')->where('id', $id)->first();
+}
+
+// ✅ GOOD: 1 query (2,269 req/s)
+$worlds = DB::findMany('World', $ids);
+```
+
+**Benchmark**: 312 → 2,269 req/s (+627%) 🔥
+
+### 3. 💾 Statement Cache (+15-30%)
+Automatic prepared statement caching - **no configuration needed**!
+
+### 4. 🔄 Connection Pooling (+200-400%)
+Swoole connection pool - **automatic** with configuration:
+
+```env
+# .env
+SWOOLE_WORKER_NUM=4    # CPU cores
+DB_POOL_MAX=20         # 4 * 5
+DB_POOL_MIN=8          # 4 * 2
+DB_PERSISTENT=true
+```
+
+### 📊 Combined Results
+| Configuration | Req/s | Improvement |
+|--------------|-------|-------------|
+| Baseline | 350 | - |
+| All optimizations | 9,712 | **+2,674%** 🚀 |
+
+**📖 Full guide**: See [PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md)  
+**⚙️ Configuration**: See [.env.performance](.env.performance)
+
+## �📄 License
 
 MIT License

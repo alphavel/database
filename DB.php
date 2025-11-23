@@ -250,6 +250,63 @@ class DB
         return self::query($sql, $values);
     }
 
+    /**
+     * Get global prepared statement cache statistics.
+     * 
+     * This shows how many statements are cached across all workers,
+     * providing insight into the aggressive caching optimization.
+     * 
+     * @return array{count: int, max: int, memory_kb: int}
+     * 
+     * @example
+     * // Check cache performance
+     * $stats = DB::getCacheStats();
+     * echo "Cached statements: {$stats['count']}/{$stats['max']}";
+     * echo "Memory used: {$stats['memory_kb']} KB";
+     */
+    public static function getCacheStats(): array
+    {
+        return Connection::getGlobalCacheStats();
+    }
+
+    /**
+     * Clear global prepared statement cache.
+     * 
+     * Use with caution in production - this will clear the cache
+     * for ALL workers, forcing statements to be re-prepared.
+     * 
+     * Useful for:
+     * - Debugging performance issues
+     * - Memory cleanup during maintenance
+     * - Testing cache behavior
+     * 
+     * @return void
+     */
+    public static function clearCache(): void
+    {
+        Connection::clearGlobalStatements();
+    }
+
+    /**
+     * Set maximum number of globally cached prepared statements.
+     * 
+     * Default: 1000 statements
+     * 
+     * Increase for applications with many unique queries.
+     * Decrease if memory usage is a concern.
+     * 
+     * @param int $max Maximum cached statements
+     * @return void
+     * 
+     * @example
+     * // Increase cache size for large applications
+     * DB::setMaxCachedStatements(5000);
+     */
+    public static function setMaxCachedStatements(int $max): void
+    {
+        Connection::setMaxCachedStatements($max);
+    }
+
     private static function getCoroutineId(): string
     {
         if (!extension_loaded('swoole')) {

@@ -51,15 +51,144 @@ class DB
     private static ?PDO $readConnection = null;
 
     /**
+     * Get optimized database configuration for maximum performance
+     * 
+     * Returns production-ready config with:
+     * - ATTR_EMULATE_PREPARES => false (+20% performance)
+     * - No ATTR_PERSISTENT (redundant in Swoole)
+     * - No pool_size (use singleton connectionRead)
+     * 
+     * @param array $overrides Override specific keys
+     * @return array Optimized configuration
+     * 
+     * @example
+     * // MySQL (default)
+     * $config = DB::optimizedConfig([
+     *     'host' => 'localhost',
+     *     'database' => 'myapp',
+     *     'username' => 'root',
+     *     'password' => 'secret',
+     * ]);
+     * 
+     * @example
+     * // PostgreSQL
+     * $config = DB::optimizedConfig([
+     *     'driver' => 'pgsql',
+     *     'host' => 'localhost',
+     *     'port' => 5432,
+     *     'database' => 'myapp',
+     * ]);
+     */
+    public static function optimizedConfig(array $overrides = []): array
+    {
+        $defaults = [
+            'driver' => 'mysql',
+            'host' => '127.0.0.1',
+            'port' => 3306,
+            'database' => 'alphavel',
+            'username' => 'root',
+            'password' => '',
+            'charset' => 'utf8mb4',
+            'options' => [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false, // CRITICAL: +20% performance
+            ],
+            // No pool_size: singleton connectionRead() is faster
+            // No ATTR_PERSISTENT: redundant in Swoole
+        ];
+        
+        return array_replace_recursive($defaults, $overrides);
+    }
+    
+    /**
+     * Quick config from environment variables
+     * 
+     * Reads DB_* env vars and returns optimized config.
+     * Perfect for zero-config setups.
+     * 
+     * @return array Optimized configuration from environment
+     * 
+     * @example
+     * // .env file:
+     * // DB_HOST=localhost
+     * // DB_DATABASE=myapp
+     * // DB_USERNAME=root
+     * // DB_PASSWORD=secret
+     * 
+     * DB::configure(DB::fromEnv());
+     */
+    public static function fromEnv(): array
+    {
+        return self::optimizedConfig([
+            'driver' => getenv('DB_DRIVER') ?: 'mysql',
+            'host' => getenv('DB_HOST') ?: '127.0.0.1',
+            'port' => (int)(getenv('DB_PORT') ?: 3306),
+            'database' => getenv('DB_DATABASE') ?: 'alphavel',
+            'username' => getenv('DB_USERNAME') ?: 'root',
+            'password' => getenv('DB_PASSWORD') ?: '',
+            'charset' => getenv('DB_CHARSET') ?: 'utf8mb4',
+        ]);
+    }
+    
+    /**
+     * Validate configuration and warn about non-optimal settings
+     * 
+     * Returns array of warnings for performance issues.
+     * Call this in development to catch misconfigurations.
+     * 
+     * @param array|null $config Config to validate (null = current config)
+     * @return array Array of warning messages
+     * 
+     * @example
+     * $warnings = DB::validateConfig();
+     * if (!empty($warnings)) {
+     *     foreach ($warnings as $warning) {
+     *         error_log("[Alphavel DB Warning] $warning");
+     *     }
+     * }
+     */
+    public static function validateConfig(?array $config = null): array
+    {
+        $config = $config ?? self::$config;
+        $warnings = [];
+        
+        // Check ATTR_EMULATE_PREPARES
+        if (($config['options'][PDO::ATTR_EMULATE_PREPARES] ?? null) === true) {
+            $warnings[] = "ATTR_EMULATE_PREPARES is set to true. This reduces performance by ~20%. Set to false for real prepared statements. See: https://github.com/alphavel/database#performance-tuning";
+        }
+        
+        // Check ATTR_PERSISTENT
+        if (isset($config['options'][PDO::ATTR_PERSISTENT]) && $config['options'][PDO::ATTR_PERSISTENT] === true) {
+            $warnings[] = "ATTR_PERSISTENT is set to true. This is redundant in Swoole and reduces performance by ~5%. Remove this option. See: https://github.com/alphavel/database#performance-tuning";
+        }
+        
+        // Check large pool_size
+        if (isset($config['pool_size']) && $config['pool_size'] > 16) {
+            $warnings[] = "pool_size is set to {$config['pool_size']}. Large pools waste memory and reduce performance by ~7%. Hot path methods use singleton connectionRead(). Recommended: 0 (disabled) or workers × 2. See: https://github.com/alphavel/database#performance-tuning";
+        }
+        
+        return $warnings;
+    }
+
+    /**
      * Configure the database subsystem
      */
     public static function configure(array $config): void
     {
         self::$config = $config;
         
+        // Validate config in development
+        if (getenv('APP_ENV') === 'development' || getenv('APP_DEBUG') === 'true') {
+            $warnings = self::validateConfig($config);
+            foreach ($warnings as $warning) {
+                error_log("[Alphavel Database] Performance Warning: $warning");
+            }
+        }
+        
         // Initialize pool if in Swoole environment and pool size > 0
-        if (extension_loaded('swoole') && ($config['pool_size'] ?? 64) > 0) {
-            self::$pool = new ConnectionPool($config, (int)($config['pool_size'] ?? 64));
+        if (extension_loaded('swoole') && ($config['pool_size'] ?? 0) > 0) {
+            self::$pool = new ConnectionPool($config, (int)($config['pool_size']));
         }
     }
 

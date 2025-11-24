@@ -26,16 +26,24 @@ class DatabaseServiceProvider extends ServiceProvider
             'database'
         );
 
-        // Register DatabaseManager as singleton
-        $this->app->singleton('db', function ($app) {
-            $config = $app->config('database.connections.mysql', []);
-            
-            if (empty($config['database'])) {
-                throw new DatabaseException(
-                    'Database name is required. Set DB_DATABASE in .env or configure database.connections.mysql.database'
-                );
-            }
+        // Get database config
+        $config = $this->app->config('database.connections.mysql', []);
+        
+        // Validate database name
+        if (empty($config['database'])) {
+            throw new DatabaseException(
+                'Database name is required. Set DB_DATABASE in .env or configure database.connections.mysql.database'
+            );
+        }
+        
+        // Validate config for performance issues (development only)
+        $this->validateConfiguration($config);
+        
+        // Configure DB facade
+        DB::configure($config);
 
+        // Register DatabaseManager as singleton
+        $this->app->singleton('db', function ($app) use ($config) {
             return new DatabaseManager($config);
         });
 
@@ -43,6 +51,42 @@ class DatabaseServiceProvider extends ServiceProvider
         $this->facades([
             'DB' => 'db',
         ]);
+    }
+    
+    /**
+     * Validate database configuration for performance issues
+     * 
+     * Logs warnings in development when non-optimal settings detected.
+     */
+    protected function validateConfiguration(array $config): void
+    {
+        // Only validate in development
+        $env = $this->app->config('env', 'production');
+        $debug = $this->app->config('debug', false);
+        
+        if ($env !== 'development' && $env !== 'local' && !$debug) {
+            return;
+        }
+        
+        $warnings = DB::validateConfig($config);
+        
+        if (!empty($warnings)) {
+            error_log("\n" . str_repeat('=', 80));
+            error_log("[Alphavel Database] ⚠️  Performance Configuration Warnings");
+            error_log(str_repeat('=', 80));
+            
+            foreach ($warnings as $warning) {
+                error_log("  • $warning");
+            }
+            
+            error_log("\n💡 Use DB::optimizedConfig() helper for optimal performance:");
+            error_log("   'mysql' => DB::optimizedConfig([");
+            error_log("       'host' => env('DB_HOST', '127.0.0.1'),");
+            error_log("       'database' => env('DB_DATABASE', 'alphavel'),");
+            error_log("       // ... other settings");
+            error_log("   ]),");
+            error_log(str_repeat('=', 80) . "\n");
+        }
     }
 
     /**

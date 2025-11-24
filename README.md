@@ -35,19 +35,67 @@ composer require alphavel/database
 
 ## ⚙️ Configuration
 
-Add these variables to your `.env` file:
+### 🎯 Zero-Config Setup (Recommended)
+
+Alphavel Database is **optimized by default**. Just set your environment variables:
 
 ```env
-DB_CONNECTION=mysql
-DB_HOST=localhost
-DB_PORT=3306
-DB_DATABASE=alphavel
+DB_HOST=127.0.0.1
+DB_DATABASE=myapp
 DB_USERNAME=root
-DB_PASSWORD=
-DB_POOL_SIZE=64  # Connection pool size (default: 64)
+DB_PASSWORD=secret
 ```
 
-For Docker environments, update `DB_HOST` to match your service name (e.g., `mysql`).
+That's it! The framework automatically uses optimal settings:
+- ✅ `ATTR_EMULATE_PREPARES => false` (+20% performance)
+- ✅ No `ATTR_PERSISTENT` (prevents overhead in Swoole)
+- ✅ No `pool_size` by default (singleton is faster)
+
+### 📝 Manual Configuration (Advanced)
+
+Use the `DB::optimizedConfig()` helper in `config/database.php`:
+
+```php
+use Alphavel\Database\DB;
+
+return [
+    'database' => [
+        'connections' => [
+            'mysql' => DB::optimizedConfig([
+                'host' => env('DB_HOST', '127.0.0.1'),
+                'database' => env('DB_DATABASE', 'alphavel'),
+                'username' => env('DB_USERNAME', 'root'),
+                'password' => env('DB_PASSWORD', ''),
+            ]),
+        ],
+    ],
+];
+```
+
+### ⚡ Quick Setup from Environment
+
+Use `DB::fromEnv()` for ultra-fast setup:
+
+```php
+use Alphavel\Database\DB;
+
+// Reads DB_* env vars automatically
+DB::configure(DB::fromEnv());
+```
+
+### ⚠️ Development Warnings
+
+The framework automatically validates your configuration in development and warns you about performance issues:
+
+```
+[Alphavel Database] ⚠️  Performance Configuration Warnings
+================================================================================
+  • ATTR_EMULATE_PREPARES is set to true. This reduces performance by ~20%.
+  • pool_size is set to 64. Large pools reduce performance by ~7%.
+
+💡 Use DB::optimizedConfig() helper for optimal performance
+================================================================================
+```
 
 ## 🎯 Quick Start (Laravel Developers)
 

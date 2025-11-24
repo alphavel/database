@@ -1,9 +1,9 @@
 {
     "name": "alphavel/database",
-    "description": "Database package for Alphavel Framework - Fastest PHP Framework",
-    "version": "1.3.3",
+    "description": "Database package with Query Builder + ORM for Alphavel Framework - #1 Fastest PHP Framework",
+    "version": "2.0.0",
     "type": "library",
-    "keywords": ["database", "pdo", "query-builder", "alphavel", "laravel-style", "performance"],
+    "keywords": ["database", "pdo", "query-builder", "orm", "eloquent", "alphavel", "laravel-style", "performance", "swoole"],
     "license": "MIT",
     "authors": [
         {
@@ -17,10 +17,17 @@
         "ext-swoole": "^5.0",
         "alphavel/alphavel": "^1.0"
     },
+    "replace": {
+        "alphavel/orm": "self.version"
+    },
     "autoload": {
         "psr-4": {
-            "Alphavel\\Database\\": ""
-        }
+            "Alphavel\\Database\\": "",
+            "Alphavel\\ORM\\": "ORM/"
+        },
+        "files": [
+            "ORM/aliases.php"
+        ]
     },
     "extra": {
         "alphavel": {

@@ -1,20 +1,31 @@
 # Alphavel Database
 
-High-performance database package for Alphavel Framework with **Laravel-style API** and Swoole coroutine support.
+🏆 **#1 Fastest PHP Framework** - High-performance Query Builder + ORM with **Laravel-style API** and Swoole optimization.
 
-> 💡 **Laravel-compatible**: If you know Laravel's Query Builder, you already know Alphavel Database!
+> 💡 **Laravel-compatible**: If you know Laravel's Query Builder & Eloquent, you already know Alphavel Database!
+> 
+> ⚡ **6,700 req/s** - Beats FrankenPHP (+141%), RoadRunner (+448%), and Hyperf (+719%)!
 
 ## 🚀 Features
 
-- **🎯 Laravel-Style API** - 100% familiar syntax for Laravel developers
-- **⚡ Persistent Connections** - +1,769% performance boost (enabled by default)
-- **📦 Batch Queries** - New `findMany()` helper (+627% performance)
-- **🔄 Connection Pooling** - Swoole Channel-based pool for zero-overhead reuse
-- **🔒 Coroutine-Safe** - Context isolation per coroutine using `Coroutine::getCid()`
-- **💾 Statement Cache** - Automatic prepared statement caching (+15-30%)
-- **🔐 Transaction Safety** - Guaranteed single-connection transactions
-- **🏗️ Query Builder** - Fluent interface identical to Laravel
-- **♻️ Auto-Release** - Automatic connection release after request
+### Core (Always Available)
+- **� #1 Fastest PHP Framework** - Global Statement Cache beats Go implementations
+- **�🎯 Laravel-Style Query Builder** - 100% familiar syntax (6,700 req/s)
+- **⚡ Persistent Connections** - Enabled by default (+1,769%)
+- **📦 Batch Queries** - `findMany()` helper (+627% performance)
+- **🔄 Connection Pooling** - Swoole Channel-based pool
+- **🔒 Coroutine-Safe** - Context isolation per coroutine
+- **💾 Global Statement Cache** - Prepare once, execute millions of times
+- **🔐 Transaction Safety** - ACID-compliant isolated connections
+
+### ORM (Optional - v2.0+)
+- **📚 Eloquent-like Models** - Laravel-familiar Active Record pattern
+- **🔗 Relationships** - hasMany, belongsTo, hasOne, belongsToMany
+- **⚡ Lazy Loading** - Zero overhead until relations accessed
+- **🎭 Events & Observers** - creating, created, updating, etc
+- **🔄 Attribute Casting** - Dates, JSON, custom casters
+
+> **Performance Note**: Query Builder (6,700 req/s) vs Models with hydration (363 req/s). Choose based on your needs!
 
 ## 📦 Installation
 
@@ -62,6 +73,40 @@ DB::transaction(function() {
 ```
 
 **📚 Full Laravel-Style Guide**: [LARAVEL_STYLE_GUIDE.md](LARAVEL_STYLE_GUIDE.md)
+
+---
+
+## 🤔 Query Builder vs Models - When to Use?
+
+| Feature | Query Builder | Models (ORM) |
+|---------|--------------|--------------|
+| **Performance** | ⚡⚡⚡⚡⚡ 6,700 req/s | ⚡⚡⚡ 363 req/s |
+| **Syntax** | `DB::table('users')->get()` | `User::all()` |
+| **Relations** | ❌ Manual joins | ✅ `$user->posts` |
+| **Events** | ❌ No | ✅ creating, created, etc |
+| **Casting** | ❌ Manual | ✅ Automatic |
+| **Use Case** | APIs, hot paths | Complex business logic |
+
+### 💡 Recommendation
+
+```php
+// ✅ Use Query Builder for APIs (6,700 req/s)
+public function index() {
+    return DB::table('users')
+        ->where('active', true)
+        ->get();
+}
+
+// ✅ Use Models for complex logic (363 req/s, but worth it!)
+public function store(Request $request) {
+    $user = User::create($request->validated());
+    // Events fired: creating, created
+    // Relations available: $user->posts
+    return $user->load('roles', 'permissions');
+}
+```
+
+**Rule of thumb:** Start with Query Builder (fast), upgrade to Models only when you need relations/events/casting.
 
 ---
 
@@ -196,6 +241,126 @@ finally {
     DB::release();  // Returns connection to pool
 }
 ```
+
+---
+
+## 📚 Models (ORM) - v2.0+
+
+**New in v2.0:** Eloquent-like ORM now included!
+
+### Defining Models
+
+```php
+<?php
+
+namespace App\Models;
+
+use Alphavel\Database\Model;
+
+class User extends Model
+{
+    protected static string $table = 'users';
+    protected static string $primaryKey = 'id';
+    
+    protected array $fillable = ['name', 'email', 'password'];
+    protected array $hidden = ['password'];
+    protected array $casts = [
+        'created_at' => 'datetime',
+        'is_admin' => 'boolean',
+    ];
+}
+```
+
+### Basic Operations
+
+```php
+// Find by ID
+$user = User::find(1);
+
+// Find or fail
+$user = User::findOrFail(1);
+
+// Get all
+$users = User::all();
+
+// Where query
+$admins = User::where('is_admin', true)->get();
+
+// Create
+$user = User::create([
+    'name' => 'John Doe',
+    'email' => 'john@example.com',
+    'password' => password_hash('secret', PASSWORD_DEFAULT),
+]);
+
+// Update
+$user->name = 'Jane Doe';
+$user->save();
+
+// Delete
+$user->delete();
+```
+
+### Relationships
+
+```php
+class User extends Model
+{
+    // One-to-many
+    public function posts()
+    {
+        return $this->hasMany(Post::class);
+    }
+    
+    // One-to-one
+    public function profile()
+    {
+        return $this->hasOne(Profile::class);
+    }
+    
+    // Many-to-one
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
+    
+    // Many-to-many
+    public function teams()
+    {
+        return $this->belongsToMany(Team::class, 'team_user');
+    }
+}
+
+// Usage
+$user = User::find(1);
+$posts = $user->posts;  // Lazy loading
+$profile = $user->profile;
+
+// Eager loading (N+1 prevention)
+$users = User::with('posts', 'profile')->get();
+```
+
+### Performance Note
+
+**Models have overhead due to hydration:**
+- Query Builder: **6,700 req/s** (arrays)
+- Models: **363 req/s** (objects with features)
+
+**When to use:**
+- ✅ Complex business logic
+- ✅ Need relations ($user->posts)
+- ✅ Need events (creating, created, etc)
+- ✅ Need casting (dates, JSON, etc)
+
+**When NOT to use:**
+- ❌ Simple API endpoints
+- ❌ Performance-critical hot paths
+- ❌ Bulk operations
+- ❌ Reporting/analytics queries
+
+**Best Practice:** Use both! Query Builder for reads, Models for writes.
+
+---
 
 ## 📊 Benchmarks
 

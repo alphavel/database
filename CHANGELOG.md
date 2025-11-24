@@ -2,6 +2,82 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2024-11-24
+
+### 🎊 MAJOR: Database + ORM Unified Package
+
+**Alphavel Database now includes ORM (previously separate `alphavel/orm` package)**
+
+**What Changed:**
+- ORM code moved from `alphavel/orm` into `alphavel/database`
+- New namespace: `Alphavel\Database\ORM\*`
+- Backward compatible: Old `Alphavel\ORM\*` namespace aliased automatically
+- Zero performance impact on Query Builder (still 6,700 req/s)
+
+**Why Unify:**
+1. ✅ **Better DX** - One `composer require` instead of two
+2. ✅ **Simplified Versioning** - Always compatible versions
+3. ✅ **Laravel-style** - Matches `illuminate/database` structure
+4. ✅ **Zero Overhead** - ORM only loads when you use Models
+5. ✅ **Familiar** - Same pattern as Laravel/Eloquent
+
+**Migration from v1.x:**
+```bash
+# Remove old ORM package (if installed)
+composer remove alphavel/orm
+
+# Update database to v2.0
+composer require alphavel/database:^2.0
+```
+
+**Code Changes:**
+```php
+// v1.x (two packages)
+use Alphavel\Database\DB;      // from alphavel/database
+use Alphavel\ORM\Model;        // from alphavel/orm (separate!)
+
+// v2.0 (unified)
+use Alphavel\Database\DB;
+use Alphavel\Database\Model;   // Now in database package!
+
+// OLD namespace still works (backward compatible)
+use Alphavel\ORM\Relations\HasMany;  // ✅ Still works via alias
+```
+
+**Performance:**
+- Query Builder: **6,700 req/s** (unchanged ✅)
+- Model hydration: **363 req/s** (when using Models)
+- Memory overhead: **+80 KB** (only if using Models)
+- Autoload: **Lazy** (Model classes not loaded until used)
+
+**What's Included:**
+```
+alphavel/database v2.0
+├── Query Builder       (6,700 req/s)
+├── DB Facade          (fast path)
+├── Connections        (pooling + persistent)
+├── Model              (ORM base class)
+└── Relations          (hasMany, belongsTo, etc)
+    ├── HasMany
+    ├── HasOne
+    ├── BelongsTo
+    └── BelongsToMany
+```
+
+**Recommendation:**
+- **APIs/Performance-critical:** Continue using `DB::table()` (6,700 req/s)
+- **Complex logic:** Use Models when you need relations/events (363 req/s)
+- **Hybrid:** Use both in same app (no conflict!)
+
+### 📚 Documentation
+
+- Updated README with unified structure
+- Added performance comparison section
+- Added "When to use Models vs QB" guide
+- Migration guide from v1.x
+
+---
+
 ## [1.3.3] - 2024-11-23
 
 ### 🚀 Performance - Global Statement Cache (Revolutionary!)

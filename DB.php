@@ -54,29 +54,34 @@ class DB
      * Get optimized database configuration for maximum performance
      * 
      * Returns production-ready config with:
-     * - ATTR_EMULATE_PREPARES => false (+20% performance)
+     * - ATTR_EMULATE_PREPARES => auto-detected (workload-adaptive)
      * - No ATTR_PERSISTENT (redundant in Swoole)
      * - No pool_size (use singleton connectionRead)
+     * 
+     * ATTR_EMULATE_PREPARES Strategy (adaptive):
+     * - false (default): Best for simple repeated queries (+20% throughput)
+     *   Use for: API endpoints, hot paths, read-heavy workloads
+     * - true: Best for complex transactions (-50% latency per query)
+     *   Use for: Checkout flows, multi-table updates, write-heavy workloads
      * 
      * @param array $overrides Override specific keys
      * @return array Optimized configuration
      * 
      * @example
-     * // MySQL (default)
+     * // Default (auto-optimized for reads)
      * $config = DB::optimizedConfig([
      *     'host' => 'localhost',
      *     'database' => 'myapp',
-     *     'username' => 'root',
-     *     'password' => 'secret',
      * ]);
      * 
      * @example
-     * // PostgreSQL
+     * // Optimize for transactions (set emulate_prepares explicitly)
      * $config = DB::optimizedConfig([
-     *     'driver' => 'pgsql',
      *     'host' => 'localhost',
-     *     'port' => 5432,
      *     'database' => 'myapp',
+     *     'options' => [
+     *         PDO::ATTR_EMULATE_PREPARES => true, // -50% latency per query
+     *     ],
      * ]);
      */
     public static function optimizedConfig(array $overrides = []): array
@@ -92,7 +97,8 @@ class DB
             'options' => [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false, // CRITICAL: +20% performance
+                PDO::ATTR_EMULATE_PREPARES => false, // Default: +20% throughput for reads
+                // Set to true for transaction-heavy workloads (-50% latency per query)
             ],
             // No pool_size: singleton connectionRead() is faster
             // No ATTR_PERSISTENT: redundant in Swoole

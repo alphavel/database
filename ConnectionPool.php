@@ -13,18 +13,46 @@ class ConnectionPool
     private int $size;
     private int $count = 0;
 
-    public function __construct(array $config, int $size = 64)
+    /**
+     * Create intelligent connection pool
+     * 
+     * Formula: pool_size = workers × connections_per_worker
+     * 
+     * @param array $config Database configuration
+     * @param int $size Pool size (auto-calculated if 0)
+     */
+    public function __construct(array $config, int $size = 0)
     {
         $this->config = $config;
-        $this->size = $size;
-        $this->pool = new Channel($size);
+        
+        // Intelligent pool sizing (auto-adapt to workers)
+        if ($size === 0) {
+            $workers = \swoole_cpu_num() * 2; // Swoole default
+            $connectionsPerWorker = $config['connections_per_worker'] ?? 5;
+            $this->size = $workers * $connectionsPerWorker;
+            
+            echo "[ConnectionPool] Auto-sized: {$workers} workers × {$connectionsPerWorker} = {$this->size} connections\n";
+        } else {
+            $this->size = $size;
+        }
+        
+        $this->pool = new Channel($this->size);
     }
 
+    /**
+     * Pre-warm pool (CRITICAL for first-request performance!)
+     */
     public function fill(): void
     {
+        echo "[ConnectionPool] Pre-warming {$this->size} connections...\n";
+        $start = microtime(true);
+        
         while ($this->count < $this->size) {
             $this->makeConnection();
         }
+        
+        $elapsed = round((microtime(true) - $start) * 1000, 2);
+        echo "[ConnectionPool] ✅ Pre-warmed {$this->count} connections in {$elapsed}ms\n";
     }
 
     public function get(float $timeout = 5.0): Connection

@@ -1,7 +1,6 @@
 {
     "name": "alphavel/database",
     "description": "Database package with Query Builder + ORM for Alphavel Framework - #1 Fastest PHP Framework",
-    "version": "2.1.0",
     "type": "library",
     "keywords": ["database", "pdo", "query-builder", "orm", "eloquent", "alphavel", "laravel-style", "performance", "swoole"],
     "license": "MIT",

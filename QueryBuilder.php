@@ -84,10 +84,68 @@ class QueryBuilder
 
     public function whereIn(string $column, array $values): self
     {
+        if (empty($values)) {
+            // Edge case: empty array should match nothing
+            // Add impossible condition to prevent SQL errors
+            $this->where[] = ['1', '=', '0'];
+            return $this;
+        }
+
         $placeholders = implode(',', array_fill(0, count($values), '?'));
         $this->where[] = [$column, 'IN', "($placeholders)"];
         $this->bindings = array_merge($this->bindings, $values);
 
+        return $this;
+    }
+
+    public function whereNotIn(string $column, array $values): self
+    {
+        if (empty($values)) {
+            // Edge case: empty array means no exclusion
+            return $this;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($values), '?'));
+        $this->where[] = [$column, 'NOT IN', "($placeholders)"];
+        $this->bindings = array_merge($this->bindings, $values);
+
+        return $this;
+    }
+
+    public function orWhere(string $column, mixed $operator, mixed $value = null): self
+    {
+        if ($value === null) {
+            $value = $operator;
+            $operator = '=';
+        }
+
+        $this->where[] = ['OR', $column, $operator, $value];
+        $this->bindings[] = $value;
+
+        return $this;
+    }
+
+    public function whereBetween(string $column, array $values): self
+    {
+        if (count($values) !== 2) {
+            throw new \InvalidArgumentException('whereBetween requires exactly 2 values');
+        }
+
+        $this->where[] = [$column, 'BETWEEN', '? AND ?'];
+        $this->bindings = array_merge($this->bindings, $values);
+
+        return $this;
+    }
+
+    public function whereNull(string $column): self
+    {
+        $this->where[] = [$column, 'IS', 'NULL'];
+        return $this;
+    }
+
+    public function whereNotNull(string $column): self
+    {
+        $this->where[] = [$column, 'IS NOT', 'NULL'];
         return $this;
     }
 
@@ -196,11 +254,41 @@ class QueryBuilder
 
     public function insert(array $data): string
     {
+        // Check if it's a batch insert (array of arrays)
+        if (isset($data[0]) && is_array($data[0])) {
+            return $this->batchInsert($data);
+        }
+
         $columns = array_keys($data);
         $values = array_values($data);
         $placeholders = implode(',', array_fill(0, count($data), '?'));
 
         $sql = "INSERT INTO {$this->table} (" . implode(',', $columns) . ") VALUES ($placeholders)";
+
+        $stmt = DB::prepare($sql);
+        $stmt->execute($values);
+
+        return DB::lastInsertId();
+    }
+
+    private function batchInsert(array $data): string
+    {
+        if (empty($data)) {
+            return '0';
+        }
+
+        $columns = array_keys($data[0]);
+        $placeholders = '(' . implode(',', array_fill(0, count($columns), '?')) . ')';
+        $allPlaceholders = implode(',', array_fill(0, count($data), $placeholders));
+        
+        $values = [];
+        foreach ($data as $row) {
+            foreach ($columns as $col) {
+                $values[] = $row[$col];
+            }
+        }
+
+        $sql = "INSERT INTO {$this->table} (" . implode(',', $columns) . ") VALUES $allPlaceholders";
 
         $stmt = DB::prepare($sql);
         $stmt->execute($values);
@@ -260,17 +348,64 @@ class QueryBuilder
         return DB::execute($sql, $this->bindings);
     }
 
+    public function truncate(): void
+    {
+        $sql = "TRUNCATE TABLE {$this->table}";
+        DB::execute($sql);
+    }
+
+    public function decrement(string $column, int $amount = 1): int
+    {
+        $sql = "UPDATE {$this->table} SET {$column} = {$column} - ?";
+        $bindings = [$amount];
+
+        if (!empty($this->where)) {
+            $conditions = [];
+            foreach ($this->where as [$col, $operator, $value]) {
+                if ($operator === 'IN') {
+                    $conditions[] = "$col $operator $value";
+                } else {
+                    $conditions[] = "$col $operator ?";
+                }
+            }
+            $sql .= ' WHERE ' . implode(' AND ', $conditions);
+            $bindings = array_merge($bindings, $this->bindings);
+        }
+
+        return DB::execute($sql, $bindings);
+    }
+
     private function compileSelect(): string
     {
         $sql = 'SELECT ' . implode(', ', $this->select) . ' FROM ' . $this->table;
 
         if (!empty($this->where)) {
             $conditions = [];
-            foreach ($this->where as [$column, $operator, $value]) {
-                if ($operator === 'IN') {
-                    $conditions[] = "$column $operator $value";
+            foreach ($this->where as $condition) {
+                // Handle OR conditions
+                if ($condition[0] === 'OR') {
+                    [, $column, $operator, $value] = $condition;
+                    if (in_array($operator, ['IN', 'NOT IN'])) {
+                        $conditions[] = "OR $column $operator $value";
+                    } elseif ($operator === 'BETWEEN') {
+                        $conditions[] = "OR $column $operator $value";
+                    } elseif (in_array($operator, ['IS', 'IS NOT'])) {
+                        $conditions[] = "OR $column $operator $value";
+                    } else {
+                        $conditions[] = "OR $column $operator ?";
+                    }
                 } else {
-                    $conditions[] = "$column $operator ?";
+                    // Regular AND conditions
+                    [$column, $operator, $value] = $condition;
+                    if (in_array($operator, ['IN', 'NOT IN'])) {
+                        $conditions[] = "$column $operator $value";
+                    } elseif ($operator === 'BETWEEN') {
+                        $conditions[] = "$column $operator $value";
+                    } elseif (in_array($operator, ['IS', 'IS NOT'])) {
+                        $conditions[] = "$column $operator $value";
+                    } else {
+                        $conditions[] = "$column $operator ?";
+                    }
                 }
             }
             $sql .= ' WHERE ' . implode(' AND ', $conditions);

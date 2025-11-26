@@ -129,25 +129,37 @@ class QueryBuilder
             self::$sqlCache[$cacheKey] = $sql;
         }
         
-        // Global statement cache (safe for SELECT)
-        $stmtKey = "qb:stmt:{$cacheKey}";
+        $sql = self::$sqlCache[$cacheKey];
         
-        if (!isset(self::$statementPool[$stmtKey])) {
-            // Check global statement limit
-            if (count(self::$statementPool) >= 200) {
-                // Remove oldest
-                $oldest = array_key_first(self::$statementPool);
-                unset(self::$statementPool[$oldest]);
+        // HOT PATH OPTIMIZATION:
+        // If not in a transaction, use the shared read connection and global statement cache.
+        // This avoids coroutine lookup overhead and maximizes statement reuse.
+        if (!DB::inTransaction()) {
+            $stmtKey = "global:stmt:{$cacheKey}";
+            
+            if (!isset(self::$statementPool[$stmtKey])) {
+                // Use singleton read connection
+                self::$statementPool[$stmtKey] = DB::connectionRead()->prepare($sql);
             }
             
-            $sql = self::$sqlCache[$cacheKey];
-            // Use DB::connectionRead() for read-only queries
-            $conn = DB::connection(); // Will use read connection internally
-            self::$statementPool[$stmtKey] = $conn->prepare($sql);
+            $stmt = self::$statementPool[$stmtKey];
+        } else {
+            // TRANSACTION PATH:
+            // Must use the isolated connection for the current coroutine.
+            // Cache must be namespaced by connection/coroutine to avoid mixing statements.
+            // We use the object hash of the connection as part of the key to be safe.
+            $conn = DB::connection();
+            $connHash = spl_object_id($conn);
+            $stmtKey = "tx:{$connHash}:{$cacheKey}";
+            
+            if (!isset(self::$statementPool[$stmtKey])) {
+                self::$statementPool[$stmtKey] = $conn->prepare($sql);
+            }
+            
+            $stmt = self::$statementPool[$stmtKey];
         }
         
         // Execute with current bindings
-        $stmt = self::$statementPool[$stmtKey];
         $stmt->execute($this->bindings);
         
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);

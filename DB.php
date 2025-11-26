@@ -244,7 +244,7 @@ class DB
      * 
      * @return \PDO
      */
-    private static function connectionRead(): PDO
+    public static function connectionRead(): PDO
     {
         if (self::$readConnection === null) {
             self::$readConnection = self::createConnection();
